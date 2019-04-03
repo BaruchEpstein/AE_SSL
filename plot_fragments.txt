@@ -1,0 +1,94 @@
+from keras.datasets import mnist
+import numpy as np
+import models
+from matplotlib import pyplot as plt
+
+# Load pre-shuffled MNIST data into train and test sets
+(X_train, y_train), (X_test, y_test) = mnist.load_data()
+
+# Preprocess input data
+X_train = X_train.reshape(X_train.shape[0], 784)
+X_test = X_test.reshape(X_test.shape[0], 784)
+X_train = X_train.astype('float32')
+X_test = X_test.astype('float32')
+
+# scale to [0,1] and binarize
+X_train /= 255
+X_test /= 255
+
+X_train = np.round(X_train)
+X_test = np.round(X_test)
+
+
+# training
+epochs = 10
+batch_size = 256
+
+steps = 10
+
+gammas = np.arange(0.05, 0.5, 0.05)
+gamma_train_errors = np.zeros((len(gammas), steps))
+gamma_test_errors = np.zeros((len(gammas), steps))
+Lipshitz_bounds = np.zeros((1, steps))
+mu_values = np.zeros((1, steps))
+
+gammas = np.arange(0.01, 0.5, 0.01)
+gamma_train_errors = np.zeros((len(gammas), steps))
+gamma_test_errors = np.zeros((len(gammas), steps))
+Lipshitz_bounds = np.zeros((1, steps))
+mu_values = np.zeros((1, steps))
+
+for step in range(0, steps):
+    model = models.FC_model(input_shape=(784,), layer_sizes=[200, 30, 200])
+    p = np.random.permutation(list(range(0, 60000)))
+    X_train_small = X_train[p[0: (step + 1) * 6000], :]
+    model.fit(X_train_small, X_train_small, epochs=20, batch_size=batch_size, verbose=0)
+    filepath = r'Experiments/Snapshots/unsupervised_MNIST' + str(step * 10) + '_model.h5'
+    model.save(filepath)
+    train_pred = model.predict(X_train_small)
+    train_abs_diff = np.abs(X_train_small - train_pred)
+    test_pred = model.predict(X_test)
+    test_abs_diff = np.abs(X_test - test_pred)
+    for gamma_ind, gamma in enumerate(gammas):
+        gamma_train_errors[gamma_ind, step] = np.sum(train_abs_diff > (0.5 - gamma)) / (784.0 * 6000*(step+1))
+        gamma_test_errors[gamma_ind, step] = np.sum(test_abs_diff > (0.5 - gamma)) / (784.0 * 10000)
+
+    mu_values[0, step] = np.linalg.norm(test_abs_diff) / 28 / 100
+
+    print(step + 1)    
+    
+r = gamma_test_errors[-1, -1]
+
+MNIST_scaled_bound = np.sqrt(1 / (0.05**2) / (6000*np.arange(1, 11))) + gamma_train_errors[-1, :]
+MNIST_test_error = gamma_test_errors[-5, :]
+
+plt.figure()
+plt.plot(np.arange(1, 11)*10, MNIST_scaled_bound,'b--'
+, label='MNIST scaled bound, $\gamma_2=0.49$')
+plt.plot(np.arange(1, 11)*10, MNIST_test_error, 'b'
+, label='MNIST Test error, $\gamma_1=0.45$')
+plt.plot(np.arange(1, 11)*10, SVHN_scaled_bound, 'g--', label='SVHN scaled bound, $\gamma_2=0.49$')
+plt.plot(np.arange(1, 11)*10, SVHN_test_error, 'g', label='SVHN Test error, $\gamma_1=0.45$')
+plt.xlabel('Train set percents')
+plt.ylabel('Margin loss')
+plt.legend()
+
+plt.figure()
+plt.plot(np.arange(1, 11)*10, [np.sqrt(784*r*(1**2+(0.5-gamma)**2)*0.5 + 784*(1-r) * 0.5*(0.5 - gamma)**2) for r in gamma_test_errors[-1, :]],'go', label='MNIST symmetric bound')
+plt.plot(np.arange(1, 11)*10, [np.sqrt(784*r + 784*(1-r) * (0.5 - gamma)**2) for r in gamma_test_errors[-1, :]],'g--', label='MNIST bound on $L_2$ error')
+plt.plot(np.arange(1, 11)*10, mu_values[0, :]*28,'g', label='MNIST $L_2$ error')
+plt.plot(np.arange(1, 11)*10, [np.sqrt(1024*r*(1**2+(0.5-gamma)**2)*0.5 + 1024*(1-r) * 0.5*(0.5 - gamma)**2) for r in SVHN_gamma_test_errors[-1, :]],'bo', label='SVHN symmetric bound')
+plt.plot(np.arange(1, 11)*10, [np.sqrt(1024*r + 1024*(1-r) * (0.5 - gamma)**2) for r in SVHN_gamma_test_errors[-1, :]], 'b--', label='SVHN bound on $L_2$ error')
+plt.plot(np.arange(1, 11)*10, SVHN_mu_values[0, :]*32, 'b', label='SVHN $L_2$ error')
+plt.xlabel("Train set percents")
+plt.ylabel("$L_2$ error")
+plt.legend(prop={'size': 8})
+
+MNIST_mu_conv = np.linalg.norm(MNIST_test_abs_diff_conv) / 100
+MNIST_G_eps = [np.sum(np.sqrt(np.sum((MNIST_test_abs_diff_conv**2), 1)) - MNIST_mu_conv < MNIST_mu_conv*frac)/test_abs_diff.shape[0] for frac in np.arange(0, 1.1, 0.01)]
+plt.figure()
+plt.plot(np.arange(0, 1.1, 0.01), MNIST_G_eps,'g', label='MNIST $G_{\epsilon}$ vs $\epsilon$');
+plt.plot(np.arange(0, 1.1, 0.01), SVHN_G_eps,'b', label='SVHN $G_{\epsilon}$ vs $\epsilon$');
+plt.xlabel('$\epsilon$ as fraction of $\mu$')
+plt.ylabel('Relative fraction of $G_{\epsilon}$')
+plt.legend()
